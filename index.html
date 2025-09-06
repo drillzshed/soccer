@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en" data-bs-theme="auto">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Drill Library — Excel Loader</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    :root { --touch-target: 48px; }
+    body { -webkit-font-smoothing: antialiased; }
+    .container { max-width: 720px; }
+    .accordion-button { padding-top: .9rem; padding-bottom: .9rem; min-height: var(--touch-target); }
+    .accordion-button span.drill-name { flex: 1; font-weight: 600; letter-spacing: .2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .accordion-item { border-radius: 16px; overflow: hidden; border: 1px solid var(--bs-border-color); }
+    .accordion-item + .accordion-item { margin-top: .75rem; }
+    .accordion-body { padding: .85rem; }
+    .section-title { font-size: .95rem; margin: .75rem 0 .25rem; opacity: .9; }
+    .page { padding: 1rem .75rem 2.5rem; }
+    @media (min-width: 576px) { .page { padding: 1.25rem; } }
+    .uploader input { display: none; }
+    .badge-soft { background: var(--bs-secondary-bg); color: var(--bs-secondary-color); }
+  </style>
+</head>
+<body>
+  <main class="page container">
+    <header class="mb-3 d-flex align-items-center justify-content-between gap-2">
+      <div>
+        <h1 class="h4 mb-1">Drills</h1>
+        <p class="text-secondary small mb-0">Load your Excel file (.xlsx). Video shows first in each drill. Columns are auto‑mapped.</p>
+      </div>
+      <label class="btn btn-sm btn-primary uploader">
+        <input id="xlsxFile" type="file" accept=".xlsx,.xlsm,.xls" />
+        Load Excel
+      </label>
+    </header>
+
+    <div id="status" class="visually-hidden">Loading…</div>
+
+    <div class="accordion" id="drillsAccordion"></div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <!-- SheetJS (XLSX) for client-side Excel parsing -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script>
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+    const applyTheme = () => document.documentElement.setAttribute('data-bs-theme', prefersDark.matches ? 'dark' : 'light');
+    prefersDark.addEventListener('change', applyTheme);
+    applyTheme();
+
+    const NORMALIZE = s => (s || '').toString().trim();
+    const SPLITLIST = v => NORMALIZE(v)
+      .split(/;|\n|\r|•|-\s|•\s|–\s|—\s/)
+      .map(x => x.trim())
+      .filter(Boolean);
+
+    function ytembed(url) {
+      url = NORMALIZE(url);
+      if (!url) return "";
+      try {
+        const u = new URL(url);
+        if (u.hostname.includes('youtube.com')) {
+          if (u.pathname === '/watch') return `https://www.youtube.com/embed/${u.searchParams.get('v')}`;
+          const parts = u.pathname.split('/').filter(Boolean);
+          if (parts[0] === 'shorts' && parts[1]) return `https://www.youtube.com/embed/${parts[1]}`;
+          if (parts[0] === 'embed' && parts[1]) return url; // already embed
+        }
+        if (u.hostname === 'youtu.be') return `https://www.youtube.com/embed/${u.pathname.slice(1)}`;
+      } catch(e) {}
+      return url; // allow Vimeo/direct mp4/etc.
+    }
+
+    function mapColumns(headers) {
+      const idx = {};
+      headers.forEach((h, i) => {
+        const key = h.toLowerCase().replace(/\s+/g, ' ').replace(/\s*\/\s*/g, ' / ').trim();
+        idx[key] = i;
+      });
+      function find(name) {
+        const key = name.toLowerCase().replace(/\s+/g, ' ').replace(/\s*\/\s*/g, ' / ').trim();
+        return idx[key] ?? -1;
+      }
+      return { find };
+    }
+
+    function renderDrills(drills) {
+      const acc = document.getElementById('drillsAccordion');
+      acc.innerHTML = '';
+      drills.forEach((d, idx) => {
+        const id = `drill${idx}`;
+        const videoSrc = ytembed(d.video_url || '');
+        const setupLis = (d.setup || []).map(s => `<li>${s}</li>`).join('');
+        const cpLis = (d.coaching_points || []).map(s => `<li>${s}</li>`).join('');
+        const progLis = (d.progression || []).map(s => `<li>${s}</li>`).join('');
+        const areaLis = (d.area_setup || []).map(s => `<li>${s}</li>`).join('');
+
+        const metaRow = [];
+        if (d.players) metaRow.push(`<span class="badge rounded-pill badge-soft">${d.players}</span>`);
+        if (d.objective) metaRow.push(`<span class="badge rounded-pill badge-soft">${d.objective}</span>`);
+
+        const item = document.createElement('div');
+        item.className = 'accordion-item';
+        item.innerHTML = `
+          <h2 class="accordion-header" id="heading-${id}">
+            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-${id}" aria-expanded="false" aria-controls="collapse-${id}">
+              <span class="drill-name">${(d.nr ? d.nr + ') ' : '') + (d.name || 'Untitled drill')}</span>
+            </button>
+          </h2>
+          <div id="collapse-${id}" class="accordion-collapse collapse" aria-labelledby="heading-${id}" data-bs-parent="#drillsAccordion">
+            <div class="accordion-body">
+              ${videoSrc ? `<div class="ratio ratio-16x9 rounded overflow-hidden mb-2"><iframe src="${videoSrc}" title="${d.name || 'Drill video'}" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div>` : ''}
+              ${metaRow.length ? `<div class="d-flex flex-wrap gap-2 mb-2">${metaRow.join('')}</div>` : ''}
+              ${d.overview ? `<h3 class="section-title">Overview</h3><p class="mb-2">${d.overview}</p>` : ''}
+              ${(d.setup && d.setup.length) ? `<h3 class="section-title">Setup</h3><ul class="mb-2">${setupLis}</ul>` : ''}
+              ${(d.area_setup && d.area_setup.length) ? `<h3 class="section-title">Area / Setup</h3><ul class="mb-2">${areaLis}</ul>` : ''}
+              ${(d.coaching_points && d.coaching_points.length) ? `<h3 class="section-title">Coaching Points</h3><ul class="mb-2">${cpLis}</ul>` : ''}
+              ${(d.progression && d.progression.length) ? `<h3 class="section-title">Progression / Variation</h3><ul class="mb-0">${progLis}</ul>` : ''}
+            </div>
+          </div>`;
+        acc.appendChild(item);
+      });
+      document.getElementById('status').classList.add('visually-hidden');
+    }
+
+    function parseSheetToDrills(ws) {
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false });
+      if (!rows.length) return [];
+      const headers = rows[0].map(h => (h || '').toString().trim());
+      const { find } = mapColumns(headers);
+      const mapIdx = {
+        nr: find('Nr'),
+        name: find('Name'),
+        desc: find('Description/Set up'),
+        cp: find('Coaching points'),
+        video: find('Video Link'),
+        area: find('Area / Setup'),
+        obj: find('Objective / Skill'),
+        players: find('Players'),
+        prog: find('Progression / Variation')
+      };
+      const drills = [];
+      for (let r = 1; r < rows.length; r++) {
+        const row = rows[r] || [];
+        const get = (i) => (i >= 0 ? NORMALIZE(row[i]) : '');
+        const d = {
+          nr: get(mapIdx.nr),
+          name: get(mapIdx.name),
+          overview: get(mapIdx.obj),
+          players: get(mapIdx.players),
+          video_url: get(mapIdx.video),
+          setup: SPLITLIST(get(mapIdx.desc)),
+          area_setup: SPLITLIST(get(mapIdx.area)),
+          coaching_points: SPLITLIST(get(mapIdx.cp)),
+          progression: SPLITLIST(get(mapIdx.prog))
+        };
+        if (d.name || d.video_url || d.overview) drills.push(d);
+      }
+      return drills;
+    }
+
+    document.getElementById('xlsxFile').addEventListener('change', async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const status = document.getElementById('status');
+      status.classList.remove('visually-hidden');
+      status.textContent = 'Reading Excel…';
+      try {
+        const data = await file.arrayBuffer();
+        const wb = XLSX.read(data, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const drills = parseSheetToDrills(ws);
+        if (!drills.length) throw new Error('No drills found');
+        renderDrills(drills);
+      } catch(err) {
+        console.error(err);
+        status.textContent = 'Error parsing Excel. Check column names.';
+      }
+    });
+  </script>
+</body>
+</html>
