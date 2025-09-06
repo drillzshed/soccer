@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Drill Library — Auto Excel Loader (Resilient)</title>
+  <title>Drill Library — Excel (Hardened)</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
     :root { --touch-target: 48px; }
@@ -19,31 +19,32 @@
     .badge-soft { background: var(--bs-secondary-bg); color: var(--bs-secondary-color); }
     .status-box { padding: .75rem; border: 1px dashed var(--bs-border-color); border-radius: .75rem; }
     .status-box.error { border-color: var(--bs-danger-border-subtle, #f5c2c7); color: var(--bs-danger-text-emphasis, #842029); background: var(--bs-danger-bg-subtle, #f8d7da); }
-    .uploader input { display: none; }
-    .uploader { display: none; } /* hidden by default; shown only on error */ 
-    /* Collapsible subsection buttons */
     .subtoggle { width: 100%; text-align: left; padding: .6rem .75rem; border-radius: .65rem; border: 1px solid var(--bs-border-color); background: transparent; }
     .subtoggle[aria-expanded="true"] { background: var(--bs-secondary-bg); }
     .subtoggle .caret { transition: transform .2s ease; }
     .subtoggle[aria-expanded="true"] .caret { transform: rotate(90deg); }
     .subsection { margin-bottom: .5rem; }
     .subsection .collapse { padding: .5rem .15rem 0 .15rem; }
+    .dropzone { display:none; margin-top: .75rem; padding: 1rem; border: 2px dashed var(--bs-border-color); border-radius: .75rem; text-align: center; }
+    .dropzone.active { background: var(--bs-secondary-bg); }
+    .dropzone .hint { font-size: .9rem; color: var(--bs-secondary-color); }
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
   <main class="page container">
-    <header class="mb-3 d-flex align-items-center justify-content-between gap-2">
-      <div>
-        <h1 class="h4 mb-1">Drills</h1>
-        <p class="text-secondary small mb-0">Auto-loads <code>SoccerDrillsList.xlsx</code> from the same folder. If blocked, you'll see a fallback to pick a file.</p>
-      </div>
-      <label class="btn btn-sm btn-outline-secondary uploader" id="uploaderLbl">
-        <input id="xlsxFile" type="file" accept=".xlsx,.xlsm,.xls" />
-        Load Excel
-      </label>
+    <header class="mb-3">
+      <h1 class="h4 mb-1">Drills</h1>
+      <p class="text-secondary small mb-0">When served over http/https, this auto-loads <code>SoccerDrillsList.xlsx</code> from the same folder. When opened as a file, use drag &amp; drop or click to pick your Excel.</p>
     </header>
 
-    <div id="status" class="status-box small">Loading <code>SoccerDrillsList.xlsx</code>…</div>
+    <div id="status" class="status-box small">Initialising…</div>
+
+    <div id="drop" class="dropzone">
+      <div class="mb-2"><strong>Drop your <code>SoccerDrillsList.xlsx</code> here</strong></div>
+      <div class="hint">…or click to choose a file. Paste of CSV/TSV also works.</div>
+      <input id="picker" type="file" accept=".xlsx,.xlsm,.xls,.csv,.tsv" class="hidden" />
+    </div>
 
     <div class="accordion mt-2" id="drillsAccordion"></div>
   </main>
@@ -51,15 +52,10 @@
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script>
-    // Theme
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
     const applyTheme = () => document.documentElement.setAttribute('data-bs-theme', prefersDark.matches ? 'dark' : 'light');
     prefersDark.addEventListener('change', applyTheme);
     applyTheme();
-
-    // Allow override via ?file=YourFile.xlsx
-    const params = new URLSearchParams(location.search);
-    const EXCEL_PATH = params.get('file') || "SoccerDrillsList.xlsx"; 
 
     const NORMALIZE = s => (s || '').toString().trim();
     const SPLITLIST = v => NORMALIZE(v)
@@ -111,7 +107,7 @@
         </div>`;
     }
 
-    function renderDrills(drills) {
+    function renderDrills(drills, sourceLabel) {
       const acc = document.getElementById('drillsAccordion');
       acc.innerHTML = '';
       drills.forEach((d, idx) => {
@@ -151,8 +147,8 @@
       });
 
       const status = document.getElementById('status');
-      status.textContent = `Loaded ${drills.length} drills from ${EXCEL_PATH}`;
-      setTimeout(() => status.classList.add('visually-hidden'), 1400);
+      status.textContent = `Loaded ${drills.length} drills${sourceLabel ? ' from ' + sourceLabel : ''}.`;
+      setTimeout(() => status.classList.add('visually-hidden'), 1600);
     }
 
     function parseSheetToDrills(ws) {
@@ -191,13 +187,20 @@
       return drills;
     }
 
-    async function fetchExcelAndRender() {
+    async function tryAutoLoad() {
       const status = document.getElementById('status');
+      const drop = document.getElementById('drop');
+      const picker = document.getElementById('picker');
+      const EXCEL_PATH = "SoccerDrillsList.xlsx";
+
+      if (location.protocol === 'file:') {
+        status.textContent = 'Opened as file. Drag your Excel here or click below to choose it.';
+        drop.style.display = 'block';
+        return;
+      }
+
       try {
-        if (location.protocol === 'file:') {
-          // Many browsers block fetch() for local files due to CORS; inform user explicitly
-          status.innerHTML = 'Opening over <code>file://</code>. Some browsers block reading sibling files. Trying anyway…';
-        }
+        status.textContent = 'Loading SoccerDrillsList.xlsx…';
         const res = await fetch(EXCEL_PATH, { cache: 'no-store' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const buf = await res.arrayBuffer();
@@ -205,45 +208,60 @@
         const ws = wb.Sheets[wb.SheetNames[0]];
         const drills = parseSheetToDrills(ws);
         if (!drills.length) throw new Error('No drills found in the first sheet.');
-        renderDrills(drills);
+        renderDrills(drills, EXCEL_PATH);
       } catch (err) {
         console.error(err);
-        const status = document.getElementById('status');
         status.classList.add('error');
-        status.innerHTML = \`Couldn't auto-load <code>\${EXCEL_PATH}</code> (\${err && err.message ? err.message : 'unknown error'}).<br>
-          <small>\${
-            (location.protocol === 'file:' 
-              ? 'Tip: Start a local server in this folder: <code>python -m http.server</code> and open <code>http://localhost:8000/</code>, or use the fallback below.'
-              : 'Ensure the Excel file is in the same folder on the server, or use the fallback below.'
-            )
-          }</small>\`;
-        // Reveal fallback uploader
-        document.getElementById('uploaderLbl').style.display = 'inline-flex';
+        status.innerHTML = `Couldn't auto-load <code>${EXCEL_PATH}</code> (${err && err.message ? err.message : 'unknown error'}).`;
+        drop.style.display = 'block';
       }
     }
 
-    // Fallback: manual local file picker (only shown on error)
-    document.getElementById('xlsxFile').addEventListener('change', async (e) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
+    (function initDnD() {
+      const drop = document.getElementById('drop');
+      const picker = document.getElementById('picker');
+      ['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); drop.classList.add('active'); }));
+      ['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); drop.classList.remove('active'); }));
+      drop.addEventListener('drop', async (e) => {
+        const file = e.dataTransfer.files?.[0]; if (!file) return;
+        await loadFromFile(file);
+      });
+      drop.addEventListener('click', () => picker.click());
+      picker.addEventListener('change', async (e) => {
+        const file = e.target.files?.[0]; if (!file) return;
+        await loadFromFile(file);
+      });
+      window.addEventListener('paste', async (e) => {
+        const text = (e.clipboardData || window.clipboardData).getData('text');
+        if (!text) return;
+        if (/[,\t]/.test(text) && /Name/i.test(text)) {
+          const rows = text.split(/\r?\n/).map(r => r.split(/\t|,/));
+          const ws = XLSX.utils.aoa_to_sheet(rows);
+          const drills = parseSheetToDrills(ws);
+          if (drills.length) renderDrills(drills, 'pasted table');
+        }
+      });
+    })();
+
+    async function loadFromFile(file) {
       const status = document.getElementById('status');
-      status.classList.remove('error');
-      status.textContent = 'Reading Excel…';
       try {
-        const data = await file.arrayBuffer();
-        const wb = XLSX.read(data, { type: 'array' });
+        status.classList.remove('error');
+        status.textContent = 'Reading file…';
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: 'array' });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const drills = parseSheetToDrills(ws);
-        if (!drills.length) throw new Error('No drills found');
-        renderDrills(drills);
+        if (!drills.length) throw new Error('No drills found (check headers).');
+        renderDrills(drills, file.name);
       } catch (err) {
         console.error(err);
         status.classList.add('error');
-        status.textContent = 'Error parsing Excel. Check column names.';
+        status.textContent = 'Error parsing file. Ensure headers match and sheet has data.';
       }
-    });
+    }
 
-    fetchExcelAndRender();
+    tryAutoLoad();
   </script>
 </body>
 </html>
