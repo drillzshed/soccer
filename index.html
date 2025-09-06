@@ -200,7 +200,7 @@
         console.error(err);
         status.classList.add('error');
         status.innerHTML = `Could not load <code>${EXCEL_PATH}</code>.<br>
-          
+          <small>Tip: open this page via a local web server (e.g., run <code>python -m http.server</code> in the folder) or host both files together, then refresh.</small>`;
       }
     }
 
